@@ -48,6 +48,8 @@ class BackgroundService : AccessibilityService() {
     private var lastScreenOffRecordTimestamp = 0L
     @Volatile
     private var lastForegroundPkgName: String? = null
+    @Volatile
+    private var lastChargingState: Boolean? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -89,6 +91,7 @@ class BackgroundService : AccessibilityService() {
         val now = GetTimeStamp()
         val screenOnBefore = updateScreenState()
         val charging = isCharging()
+        updateRetentionOnPowerStateChanged(charging)
         timerIdle = !screenOnBefore && !charging
 
         if (shouldSkipUnstableScreenOffSample(screenOnBefore)) {
@@ -317,6 +320,15 @@ class BackgroundService : AccessibilityService() {
         val status = BatteryStatsProvider.getBatteryStatus(applicationContext)
         return status == BatteryManager.BATTERY_STATUS_CHARGING ||
                 status == BatteryManager.BATTERY_STATUS_FULL
+    }
+
+    // 充放电会话切换时清理旧数据, 保证长时间运行时也不会积累超过 10 次充放电记录
+    private fun updateRetentionOnPowerStateChanged(charging: Boolean) {
+        val previousChargingState = lastChargingState
+        lastChargingState = charging
+        if (previousChargingState != null && previousChargingState != charging) {
+            BatteryStatsRecorder.optimize()
+        }
     }
 
     private fun isKeyguardLocked(): Boolean {

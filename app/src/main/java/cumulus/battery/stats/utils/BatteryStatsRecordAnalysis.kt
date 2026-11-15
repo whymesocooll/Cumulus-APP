@@ -243,35 +243,58 @@ class BatteryStatsRecordAnalysis(private val records: List<BatteryStatsItem>) {
         )
     }
 
-    private fun calculateUsagePercentageDataPoints(): DataPointList {
-        if (records.isNotEmpty()) {
-            val percentageDataPoints: DataPointMutableList = mutableListOf()
-            val minTimestamp = GetTimeStamp() - 24L * 3600L
-            val recentRecords = records
-                .filter { it.timestamp > minTimestamp }
-                .sortedBy { it.timestamp }
-            var lastPercentage: Int? = null
-            var lastTimestamp: Long? = null
-            for (record in recentRecords) {
-                val x = (record.timestamp - minTimestamp).toFloat()
-                val y = record.batteryPercentage.toFloat()
-                if (record.timestamp == lastTimestamp) {
-                    if (record.batteryPercentage != lastPercentage && percentageDataPoints.isNotEmpty()) {
-                        percentageDataPoints[percentageDataPoints.lastIndex] = Pair(x, y)
-                        lastPercentage = record.batteryPercentage
-                    }
-                    continue
-                }
-                if (record.batteryPercentage == lastPercentage) {
-                    continue
-                }
-                percentageDataPoints.add(Pair(x, y))
-                lastPercentage = record.batteryPercentage
-                lastTimestamp = record.timestamp
-            }
-            return percentageDataPoints
+    // 只取当前所处的一段充电会话或一段放电会话, 避免充电与放电的曲线混在同一张图里
+    private fun getCurrentUsageSessionRecords(): List<BatteryStatsItem> {
+        if (records.isEmpty()) {
+            return listOf()
         }
-        return listOf()
+
+        var endPos = records.lastIndex
+        while (endPos >= 0 && !records[endPos].isCharging() && !records[endPos].isDischarging()) {
+            endPos--
+        }
+        if (endPos < 0) {
+            return listOf()
+        }
+
+        val charging = records[endPos].isCharging()
+        var beginPos = endPos
+        while (beginPos > 0) {
+            val previousRecord = records[beginPos - 1]
+            val previousRecordInSession =
+                if (charging) previousRecord.isCharging() else previousRecord.isDischarging()
+            if (!previousRecordInSession) {
+                break
+            }
+            beginPos--
+        }
+        return records.subList(beginPos, endPos + 1)
+    }
+
+    private fun calculateUsagePercentageDataPoints(): DataPointList {
+        val usageSessionRecords = getCurrentUsageSessionRecords()
+        if (usageSessionRecords.isEmpty()) {
+            return listOf()
+        }
+
+        val percentageDataPoints: DataPointMutableList = mutableListOf()
+        val beginTimestamp = usageSessionRecords.first().timestamp
+        var lastPercentage: Int? = null
+        for (record in usageSessionRecords) {
+            if (record.batteryPercentage == lastPercentage) {
+                continue
+            }
+            val x = (record.timestamp - beginTimestamp).toFloat()
+            percentageDataPoints.add(Pair(x, record.batteryPercentage.toFloat()))
+            lastPercentage = record.batteryPercentage
+        }
+
+        val lastRecord = usageSessionRecords.last()
+        val lastRecordX = (lastRecord.timestamp - beginTimestamp).toFloat()
+        if (lastRecordX > percentageDataPoints.last().first) {
+            percentageDataPoints.add(Pair(lastRecordX, lastRecord.batteryPercentage.toFloat()))
+        }
+        return percentageDataPoints
     }
 
     private fun calculateScreenOnAveragePower(): Double {
@@ -415,6 +438,11 @@ class BatteryStatsRecordAnalysis(private val records: List<BatteryStatsItem>) {
         return (screenOnDuration.toDouble() * latestRecord.batteryPercentage /
                 screenOnUsedPercentage)
             .roundToLong()
+    }
+
+    private fun BatteryStatsItem.isCharging(): Boolean {
+        return batteryStatus == BatteryManager.BATTERY_STATUS_CHARGING ||
+                batteryStatus == BatteryManager.BATTERY_STATUS_FULL
     }
 
     private fun BatteryStatsItem.isDischarging(): Boolean {

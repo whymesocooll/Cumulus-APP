@@ -9,13 +9,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 object BatteryStatsRecorder {
+    @Volatile
     private var sqlHelper: BatteryDataSQLHelper? = null
 
     fun init(context: Context) {
-        CoroutineScope(Dispatchers.IO).launch {
-            if (sqlHelper == null) {
-                sqlHelper = BatteryDataSQLHelper(context)
-            }
+        if (sqlHelper == null) {
+            sqlHelper = BatteryDataSQLHelper(context)
         }
     }
 
